@@ -61,8 +61,18 @@ jobs:
 
       - name: liberar espaco em disco no runner
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android "$AGENT_TOOLSDIRECTORY" || true
-          df -h /
+          echo "== ANTES =="; df -h / | tail -1
+          # tira tudo que o build nao usa (o LTX precisa de ~50 GB livres)
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android "$AGENT_TOOLSDIRECTORY" \
+                      /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift /usr/lib/mono \
+                      /opt/microsoft /usr/local/lib/node_modules /usr/share/miniconda \
+                      /usr/local/share/chromium /opt/google /usr/local/.ghcup /usr/share/java \
+                      /usr/lib/jvm /usr/share/gradle /usr/share/kotlin || true
+          sudo swapoff -a || true
+          sudo rm -f /swapfile /mnt/swapfile || true
+          docker image prune -a -f || true
+          echo "== DEPOIS =="; df -h / | tail -1
+          echo "espaco livre em GB: $(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
 
       - uses: docker/setup-buildx-action@v3
 
