@@ -35,18 +35,45 @@ jobs:
       lista: ${{ steps.montar.outputs.lista }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: montar
         name: descobre as familias (uma pasta por imagem)
+        env:
+          EVENTO: ${{ github.event_name }}
+          PEDIDA: ${{ github.event.inputs.familia }}
+          ANTES: ${{ github.event.before }}
+          DEPOIS: ${{ github.sha }}
         run: |
           TODAS=$(ls -d docker/*/ | xargs -n1 basename | sort | paste -sd, -)
-          PEDIDA="${{ github.event.inputs.familia }}"
-          if [ -n "$PEDIDA" ] && [ "$PEDIDA" != "todas" ]; then
-            LISTA="[\"$PEDIDA\"]"
-          else
-            LISTA=$(echo "$TODAS" | tr ',' '\n' | sed 's/.*/"&"/' | paste -sd, -)
-            LISTA="[$LISTA]"
+          if [ "$EVENTO" = "workflow_dispatch" ] && [ -n "$PEDIDA" ] && [ "$PEDIDA" != "todas" ]; then
+            echo "pedido manual: $PEDIDA"
+            echo "lista=[\"$PEDIDA\"]" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "familias: $LISTA"
+          # num push, constroi SO as familias cujos arquivos mudaram - assim mexer
+          # numa imagem nao obriga a reconstruir (e rebaixar) as outras.
+          MUDOU=""
+          if [ -n "$ANTES" ] && [ "$ANTES" != "0000000000000000000000000000000000000000" ]; then
+            MUDOU=$(git diff --name-only "$ANTES" "$DEPOIS" -- docker workflows 2>/dev/null || true)
+          fi
+          if [ -z "$MUDOU" ]; then
+            echo "nenhuma mudanca em docker/ ou workflows/ - nada a construir"
+            echo "lista=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "arquivos que mudaram:"; echo "$MUDOU"
+          LISTA=""
+          for f in $(echo "$TODAS" | tr ',' ' '); do
+            if echo "$MUDOU" | grep -q "^docker/$f/"; then
+              LISTA="$LISTA\"$f\","; continue
+            fi
+            if echo "$MUDOU" | grep -q "^workflows/$f-"; then
+              LISTA="$LISTA\"$f\","; continue
+            fi
+          done
+          LISTA="[${LISTA%,}]"
+          echo "familias a construir: $LISTA"
           echo "lista=$LISTA" >> "$GITHUB_OUTPUT"
 
   construir:

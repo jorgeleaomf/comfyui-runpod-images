@@ -64,18 +64,32 @@ RUN set -eux; \
              /workspace/runpod-slim/ComfyUI/temp; \
     test -f /workspace/runpod-slim/ComfyUI/main.py
 
-# ---- 3) modelos do Wan 2.2 -------------------------------------------------
-# O lugar do GGUF importa: unet_gguf -> models/unet e clip_gguf -> models/clip
-# (foi assim no pod de referencia e e assim que o build carrega).
+# ---- 3) modelos do Wan 2.2, UM BLOCO POR ARQUIVO GRANDE --------------------
+# Cada RUN vira uma CAMADA separada da imagem, e o container puxa camadas em
+# PARALELO. Com tudo num RUN so (como estava antes) o modelo virava uma camada
+# unica de 16,5 GB e o pod baixava em fila indiana - o pull ficava lento.
+# O lugar do GGUF importa: unet_gguf -> models/unet e clip_gguf -> models/clip.
+
+# 3a) o difusor (~12,8 GB) - sozinho na sua camada
+RUN set -eux; \
+    mkdir -p /workspace/runpod-slim/ComfyUI/models/unet; \
+    curl -fL --retry 5 --retry-delay 5 \
+        -o /workspace/runpod-slim/ComfyUI/models/unet/wan2.2-i2v-rapid-aio-v10-nsfw-Q6_K.gguf \
+        "https://huggingface.co/befox/WAN2.2-14B-Rapid-AllInOne-GGUF/resolve/main/v10/wan2.2-i2v-rapid-aio-v10-nsfw-Q6_K.gguf"
+
+# 3b) o codificador de texto (~3,4 GB) na sua camada
+RUN set -eux; \
+    mkdir -p /workspace/runpod-slim/ComfyUI/models/clip; \
+    cd /workspace/runpod-slim/ComfyUI/models/clip; \
+    curl -fL --retry 5 --retry-delay 5 -o umt5-xxl-encoder-Q4_K_M.gguf \
+        "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"; \
+    curl -fL --retry 5 --retry-delay 5 -o spiece.model \
+        "https://huggingface.co/google/umt5-xxl/resolve/main/spiece.model"
+
+# 3c) VAE + clip_vision + LoRA (~1,6 GB) na sua camada
 RUN set -eux; \
     cd /workspace/runpod-slim/ComfyUI/models; \
-    mkdir -p unet clip vae loras clip_vision; \
-    curl -fL --retry 5 --retry-delay 5 -o unet/wan2.2-i2v-rapid-aio-v10-nsfw-Q6_K.gguf \
-        "https://huggingface.co/befox/WAN2.2-14B-Rapid-AllInOne-GGUF/resolve/main/v10/wan2.2-i2v-rapid-aio-v10-nsfw-Q6_K.gguf"; \
-    curl -fL --retry 5 --retry-delay 5 -o clip/umt5-xxl-encoder-Q4_K_M.gguf \
-        "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf"; \
-    curl -fL --retry 5 --retry-delay 5 -o clip/spiece.model \
-        "https://huggingface.co/google/umt5-xxl/resolve/main/spiece.model"; \
+    mkdir -p vae loras clip_vision; \
     curl -fL --retry 5 --retry-delay 5 -o vae/wan_2.1_vae.safetensors \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"; \
     curl -fL --retry 5 --retry-delay 5 -o clip_vision/clip_vision_h.safetensors \
