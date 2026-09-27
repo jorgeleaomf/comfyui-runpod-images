@@ -65,6 +65,10 @@ jobs:
           echo "arquivos que mudaram:"; echo "$MUDOU"
           LISTA=""
           for f in $(echo "$TODAS" | tr ',' ' '); do
+            if [ ! -f "docker/$f/Dockerfile" ]; then
+              echo "familia $f sem Dockerfile - ignorada"
+              continue
+            fi
             if echo "$MUDOU" | grep -q "^docker/$f/"; then
               LISTA="$LISTA\"$f\","; continue
             fi
