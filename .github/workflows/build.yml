@@ -82,6 +82,8 @@ jobs:
 
   construir:
     needs: preparar
+    # sem familia para construir, nao roda (lista vazia nao pode virar matriz)
+    if: needs.preparar.outputs.lista != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
