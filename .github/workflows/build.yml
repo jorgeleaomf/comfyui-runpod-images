@@ -1,0 +1,105 @@
+# =============================================================================
+# Build das imagens ComfyUI prontas para RunPod e publicacao no GHCR.
+# Roda nos servidores do GitHub (nada na maquina do usuario, sem Docker local).
+# A autenticacao usa o GITHUB_TOKEN do proprio repositorio: nenhum segredo
+# precisa ser cadastrado.
+#
+# Para reconstruir: aba Actions -> "construir imagens" -> Run workflow.
+# A tag ":latest" aponta para a ultima construcao bem-sucedida e uma tag com a
+# data (AAAAMMDD) guarda a versao daquele dia.
+# =============================================================================
+name: construir imagens
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "workflows/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+    inputs:
+      familia:
+        description: "qual familia construir (ou 'todas')"
+        default: "todas"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      lista: ${{ steps.montar.outputs.lista }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: montar
+        name: descobre as familias (uma pasta por imagem)
+        run: |
+          TODAS=$(ls -d docker/*/ | xargs -n1 basename | sort | paste -sd, -)
+          PEDIDA="${{ github.event.inputs.familia }}"
+          if [ -n "$PEDIDA" ] && [ "$PEDIDA" != "todas" ]; then
+            LISTA="[\"$PEDIDA\"]"
+          else
+            LISTA=$(echo "$TODAS" | tr ',' '\n' | sed 's/.*/"&"/' | paste -sd, -)
+            LISTA="[$LISTA]"
+          fi
+          echo "familias: $LISTA"
+          echo "lista=$LISTA" >> "$GITHUB_OUTPUT"
+
+  construir:
+    needs: preparar
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        familia: ${{ fromJson(needs.preparar.outputs.lista) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: liberar espaco em disco no runner
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: entrar no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: data da construcao
+        id: data
+        run: echo "valor=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: construir e publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.familia }}/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/comfyui-${{ matrix.familia }}:latest
+            ghcr.io/${{ github.repository_owner }}/comfyui-${{ matrix.familia }}:${{ steps.data.outputs.valor }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-${{ matrix.familia }}:latest
+          cache-to: type=inline
+          provenance: true
+
+      - name: resumo
+        run: |
+          {
+            echo "### imagem construida: comfyui-${{ matrix.familia }}"
+            echo ""
+            echo "- tag: \`ghcr.io/${{ github.repository_owner }}/comfyui-${{ matrix.familia }}:latest\`"
+            echo "- tag com data: \`${{ steps.data.outputs.valor }}\`"
+            echo "- origem do codigo: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
